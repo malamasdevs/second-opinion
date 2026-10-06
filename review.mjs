@@ -78,9 +78,13 @@ const firstPass = await anthropic.messages.create({
     "Report only concrete, high-confidence problems: bugs, security issues,",
     "missing error handling, breaking changes, leaked secrets, race conditions.",
     "For each one give the file, roughly where, what breaks, and why.",
-    "If the diff looks fine, say so in one line. Do not invent findings to",
-    "seem thorough, and do not restate what the diff does.",
-    "Markdown, under 300 words.",
+    "Do not invent findings to seem thorough, and do not restate what the diff does.",
+    "",
+    "FORMAT. Your first line must be exactly one of:",
+    "  VERDICT: N finding(s)",
+    "  VERDICT: no issues found",
+    "Then a blank line, then the review as markdown. Number each finding and",
+    "name the file. Under 300 words after the verdict line.",
   ].join("\n"),
   messages: [{ role: "user", content: payload }],
 });
@@ -132,18 +136,42 @@ const note = truncated
   ? `\n\n_Large diff — reviewed the first ${Math.round(diff.length / 1000)} kB. Lockfiles excluded._`
   : "";
 
+/** Lifts the "VERDICT: ..." first line out, returning [verdict, body]. */
+function splitVerdict(text, fallback) {
+  const lines = (text || "").split("\n");
+  const first = lines[0]?.trim() ?? "";
+  if (/^VERDICT:/i.test(first)) {
+    return [first.replace(/^VERDICT:\s*/i, "").trim(), lines.slice(1).join("\n").trim()];
+  }
+  return [fallback, (text || "").trim()];
+}
+
+const [claudeVerdict, claudeBody] = splitVerdict(claudeReview, "reviewed");
+const [auditVerdict, auditBody] = splitVerdict(audit, "reviewed the review");
+
 process.stdout.write(
   [
     "<!-- second-opinion -->",
     "## Second opinion",
     "",
-    `### ${CLAUDE_MODEL} reviewed the diff`,
+    "| pass | model | verdict |",
+    "|---|---|---|",
+    `| **1 · review** | \`${CLAUDE_MODEL}\` | ${claudeVerdict} |`,
+    `| **2 · audit** | \`${OPENAI_MODEL}\` | ${auditVerdict} |`,
     "",
-    claudeReview || "_No response._",
+    "---",
     "",
-    `### ${OPENAI_MODEL} reviewed that review`,
+    `### Pass 1 — \`${CLAUDE_MODEL}\` reviewed the diff`,
     "",
-    audit || "_No response._",
+    claudeBody || "_No response._",
+    "",
+    "---",
+    "",
+    `### Pass 2 — \`${OPENAI_MODEL}\` reviewed that review`,
+    "",
+    "_Same diff, plus pass 1's review. Looking only for what pass 1 got wrong._",
+    "",
+    auditBody || "_No response._",
     note,
     "",
     "<details><summary>Token usage and cost</summary>",
@@ -155,6 +183,6 @@ process.stdout.write(
     "",
     "</details>",
     "",
-    "<sub>Advisory. Two models disagree on purpose — they have different blind spots.</sub>",
+    "<sub>Advisory — it cannot approve and never blocks a merge. Two models on purpose: they have different blind spots.</sub>",
   ].join("\n"),
 );
