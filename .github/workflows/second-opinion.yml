@@ -25,6 +25,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,12 +37,14 @@ jobs:
       - name: Collect the diff
         env:
           BASE_REF: ${{ github.base_ref }}
+          # Caps what one PR can cost. Override with a repo variable.
+          DIFF_LIMIT: ${{ vars.DIFF_LIMIT || '90000' }}
         run: |
           git diff "origin/$BASE_REF...HEAD" -- . \
             ':(exclude)*.lock' ':(exclude)package-lock.json' \
             ':(exclude)yarn.lock' ':(exclude)pnpm-lock.yaml' \
             > /tmp/full.diff || true
-          head -c "${DIFF_LIMIT:-90000}" /tmp/full.diff > /tmp/pr.diff
+          head -c "$DIFF_LIMIT" /tmp/full.diff > /tmp/pr.diff
           echo "DIFF_BYTES=$(wc -c < /tmp/full.diff)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
