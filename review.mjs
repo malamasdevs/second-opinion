@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { costTable, logRunContext } from "./cost.mjs";
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
@@ -26,6 +27,8 @@ if (missing.length) {
   console.error(`second-opinion: ${missing.join(" and ")} not set - skipping review.`);
   process.exit(0);
 }
+
+logRunContext();
 
 const diff = fs.existsSync(DIFF_PATH) ? fs.readFileSync(DIFF_PATH, "utf8") : "";
 if (!diff.trim()) {
@@ -143,12 +146,12 @@ process.stdout.write(
     audit || "_No response._",
     note,
     "",
-    "<details><summary>Token usage</summary>",
+    "<details><summary>Token usage and cost</summary>",
     "",
-    `| model | in | out |`,
-    `|---|---|---|`,
-    `| ${CLAUDE_MODEL} | ${u1.input_tokens} | ${u1.output_tokens} |`,
-    `| ${OPENAI_MODEL} | ${u2.prompt_tokens ?? "?"} | ${u2.completion_tokens ?? "?"} |`,
+    costTable([
+      { model: CLAUDE_MODEL, in: u1.input_tokens, out: u1.output_tokens },
+      { model: OPENAI_MODEL, in: u2.prompt_tokens ?? 0, out: u2.completion_tokens ?? 0 },
+    ]),
     "",
     "</details>",
     "",
