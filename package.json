@@ -1,0 +1,11 @@
+{
+  "name": "second-opinion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Two AI models review every PR. The second one reviews the first one's review.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "openai": "^4.77.0"
+  }
+}

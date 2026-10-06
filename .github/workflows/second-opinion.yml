@@ -1,0 +1,83 @@
+# Two models review every PR. Claude reviews the diff; a second model reviews
+# Claude's review against the same diff and says what it missed or got wrong.
+# Posts once, updates itself on every push. Advisory — it never blocks a merge.
+#
+# Setup: add ANTHROPIC_API_KEY and OPENAI_API_KEY as repository secrets.
+name: Second Opinion
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: second-opinion-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Two-model review
+    # Fork PRs don't receive secrets, and drafts aren't ready for review.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # SECURITY: base_ref goes through env, never straight into the shell.
+      # A branch name can legally contain $ ` or ; — interpolating
+      # ${{ github.base_ref }} into a run: block is a script-injection sink.
+      - name: Collect the diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff "origin/$BASE_REF...HEAD" -- . \
+            ':(exclude)*.lock' ':(exclude)package-lock.json' \
+            ':(exclude)yarn.lock' ':(exclude)pnpm-lock.yaml' \
+            > /tmp/full.diff || true
+          head -c "${DIFF_LIMIT:-90000}" /tmp/full.diff > /tmp/pr.diff
+          echo "DIFF_BYTES=$(wc -c < /tmp/full.diff)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install SDKs
+        run: npm install --no-audit --no-fund --silent
+
+      - name: Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+        run: node review.mjs > /tmp/review.md
+
+      - name: Post it
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const body = fs.readFileSync('/tmp/review.md', 'utf8')
+            if (!body.trim()) { core.notice('Nothing to post.'); return }
+
+            const marker = '<!-- second-opinion -->'
+            const pr = context.issue.number
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: pr, per_page: 100,
+            })
+            const mine = comments.find(c => c.body?.startsWith(marker))
+            if (mine) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: mine.id, body })
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr, body })
+            }
