@@ -16,8 +16,22 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
 const DIFF_PATH = "/tmp/pr.diff";
 
-const diff = fs.readFileSync(DIFF_PATH, "utf8");
-if (!diff.trim()) process.exit(0);
+/**
+ * No keys, no review. The workflow stays green so that a public repo without
+ * the secrets configured - or one that has had them revoked - doesn't show a
+ * red X on every pull request.
+ */
+const missing = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"].filter((k) => !process.env[k]);
+if (missing.length) {
+  console.error(`second-opinion: ${missing.join(" and ")} not set - skipping review.`);
+  process.exit(0);
+}
+
+const diff = fs.existsSync(DIFF_PATH) ? fs.readFileSync(DIFF_PATH, "utf8") : "";
+if (!diff.trim()) {
+  console.error("second-opinion: empty diff - nothing to review.");
+  process.exit(0);
+}
 
 const truncated = Number(process.env.DIFF_BYTES || 0) > diff.length;
 const title = process.env.PR_TITLE || "(no title)";
